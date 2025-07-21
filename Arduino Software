@@ -1,0 +1,241 @@
+const float robotSpeed = 0.35;   // Speed in m/s 
+const float turnRate = 200.0;    // Turn rate in degrees per second 
+unsigned long moveStartTime = 0; 
+unsigned long moveDuration = 0; 
+
+float xPos = 0.0, yPos = 0.0; // Robot's X and Y coordinates (in cm) 
+float heading = 0.0;          // Robot's heading in degrees (0 = facing forward) 
+
+// Movement log 
+String movementLog = "";
+
+// Pin definitions (assumed based on usage)
+const int trigPin = 9;
+const int echoPin = 10;
+const int GreenLedPin = 2;
+const int RedLedPin = 3;
+const int YellowLedPin = 4;
+
+// Sensor variables
+long duration;
+float distance;
+bool obstacleDetected = false;
+
+// Input command
+char currentCommand;
+int moveParameter;
+
+// Assume motor1 and motor2 are instances of a motor control class with init(), forward(), reverse(), stop()
+MotorDriver motor1;
+MotorDriver motor2;
+
+void setup() { 
+  // Initialize pins 
+  pinMode(trigPin, OUTPUT); 
+  pinMode(echoPin, INPUT); 
+  pinMode(GreenLedPin, OUTPUT); 
+  pinMode(RedLedPin, OUTPUT); 
+  pinMode(YellowLedPin, OUTPUT); 
+
+  // Initialize motors 
+  motor1.init(); 
+  motor2.init(); 
+
+  Serial.begin(9600); 
+  Serial.println("Enter commands: 'wXX' = forward XX cm, 'sXX' = backward XX cm, 'aXX' = left XX degrees, 'dXX' = right XX degrees"); 
+} 
+
+void loop() { 
+  detectObstacle(); // Check for obstacles using the ultrasonic sensor 
+
+  // Read command from Serial Monitor 
+  if (Serial.available() > 0) { 
+    String input = Serial.readStringUntil('\n'); 
+    if (input.length() > 1) { 
+      currentCommand = input[0]; 
+      moveParameter = input.substring(1).toInt(); 
+      executeCommand(currentCommand, moveParameter); 
+    } else { 
+      currentCommand = 'x'; // Stop if invalid input 
+      stopRobot(); 
+    } 
+  } 
+
+  // Check if the robot should stop based on the time elapsed 
+  if (moveDuration > 0 && millis() - moveStartTime >= moveDuration) { 
+    stopRobot(); 
+    moveDuration = 0; // Reset duration after completing the move 
+  } 
+
+  // Check if 'm' was sent to print log
+  if (Serial.available() > 0) { 
+    char input = Serial.read(); 
+    if (input == 'm') { 
+      Serial.println("Movement log:"); 
+      Serial.println(movementLog); 
+    } 
+  } 
+
+  delay(50); 
+} 
+
+// Execute commands with a distance parameter 
+void executeCommand(char command, int parameter) { 
+  switch (command) { 
+    case 'w': moveForward(parameter); break; 
+    case 's': moveBackward(parameter); break; 
+    case 'a': turnLeft(parameter); break; 
+    case 'd': turnRight(parameter); break; 
+    default: stopRobot(); break; 
+  } 
+} 
+
+// Move forward by the specified distance in cm 
+void moveForward(int distanceCm) { 
+  if (obstacleDetected) { 
+    stopRobot(); 
+    Serial.println("Obstacle detected! Cannot move forward."); 
+    return; 
+  } 
+
+  motor1.stop(); 
+  motor2.stop(); 
+
+  float timeSec = (distanceCm / 100.0) / robotSpeed; 
+  moveDuration = timeSec * 1000;  
+  moveStartTime = millis(); 
+
+  // Log the movement 
+  logMovement('w', distanceCm); 
+
+  setLedState(GreenLedPin); 
+
+  motor1.forward(70); 
+  motor2.forward(60); 
+
+  // Update position based on current heading 
+  xPos += distanceCm * cos(radians(heading)); 
+  yPos += distanceCm * sin(radians(heading)); 
+} 
+
+// Move backward by the specified distance in cm 
+void moveBackward(int distanceCm) { 
+  motor1.stop(); 
+  motor2.stop(); 
+
+  float timeSec = (distanceCm / 100.0) / robotSpeed; 
+  moveDuration = timeSec * 1000;  
+  moveStartTime = millis(); 
+
+  logMovement('s', distanceCm); 
+
+  setLedState(RedLedPin); 
+
+  motor1.reverse(60); 
+  motor2.reverse(60); 
+
+  xPos -= distanceCm * cos(radians(heading)); 
+  yPos -= distanceCm * sin(radians(heading)); 
+} 
+
+// Turn left by the specified angle in degrees 
+void turnLeft(int angleDeg) { 
+  motor1.stop(); 
+  motor2.stop(); 
+
+  float timeSec = angleDeg / turnRate; 
+  moveDuration = timeSec * 1000;  
+  moveStartTime = millis(); 
+
+  logMovement('a', angleDeg); 
+
+  setLedState(YellowLedPin); 
+
+  motor1.forward(50); 
+  motor2.reverse(50); 
+
+  // Update heading 
+  heading += angleDeg; 
+  if (heading >= 360.0) heading -= 360.0; 
+} 
+
+// Turn right by the specified angle in degrees 
+void turnRight(int angleDeg) { 
+  motor1.stop(); 
+  motor2.stop(); 
+
+  float timeSec = angleDeg / turnRate; 
+  moveDuration = timeSec * 1000;  
+  moveStartTime = millis(); 
+
+  logMovement('d', angleDeg); 
+
+  setLedState(YellowLedPin); 
+
+  motor1.reverse(50); 
+  motor2.forward(50); 
+
+  heading -= angleDeg; 
+  if (heading < 0.0) heading += 360.0; 
+} 
+
+// Stop the robot and set the LED state 
+void stopRobot() { 
+  motor1.stop(); 
+  motor2.stop(); 
+  setLedState(YellowLedPin, true); 
+} 
+
+// Detect obstacles and distances using the ultrasonic sensor 
+void detectObstacle() { 
+  digitalWrite(trigPin, LOW); 
+  delayMicroseconds(2); 
+
+  digitalWrite(trigPin, HIGH); 
+  delayMicroseconds(10); 
+  digitalWrite(trigPin, LOW); 
+
+  duration = pulseIn(echoPin, HIGH); 
+  distance = (duration * 0.0343) / 2; // Calculate the distance 
+
+  Serial.print("Distance: "); 
+  Serial.print(distance); 
+  Serial.println(" cm"); 
+
+  if (distance <= 10) { 
+    obstacleDetected = true; 
+    stopRobot(); 
+    Serial.println("Object detected! Stopping."); 
+  } else { 
+    obstacleDetected = false; 
+  } 
+} 
+
+// Function to set the LED state based on movement  
+void setLedState(int activeLedPin, bool isStopping = false) { 
+  digitalWrite(GreenLedPin, LOW); 
+  digitalWrite(RedLedPin, LOW); 
+  digitalWrite(YellowLedPin, LOW); 
+
+  if (isStopping) { 
+    digitalWrite(YellowLedPin, HIGH); 
+    digitalWrite(RedLedPin, HIGH); 
+  } else { 
+    digitalWrite(activeLedPin, HIGH); 
+  } 
+} 
+
+// Function to log movements 
+void logMovement(char command, int parameter) { 
+  movementLog += "Command: "; 
+  movementLog += command; 
+  movementLog += ", Parameter: "; 
+  movementLog += parameter; 
+  movementLog += ", Position: ("; 
+  movementLog += xPos; 
+  movementLog += ", "; 
+  movementLog += yPos; 
+  movementLog += "), Heading: "; 
+  movementLog += heading; 
+  movementLog += " degrees\n"; 
+}
